@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Qlib, MLflow, and local experiment outputs
+.qlib/
+qlib_data/
+mlruns/
+logs/
+mlflow*.db
+optuna_studies/
+optuna_best_params.json
+*_best_params.json
+*.pt
+*.pth
+*.ckpt
+*.pkl
+
+# Local notebooks and editor state
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

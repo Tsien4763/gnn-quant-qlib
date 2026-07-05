@@ -1,0 +1,119 @@
+qlib_init: #初始化环境
+  provider_uri: "~/.qlib/qlib_data/cn_data" # 数据在哪
+  region: cn # 中国地区
+  exp_manager:
+    class: MLflowExpManager
+    # 实验管理用 MLflow。
+    # 每次 qrun 运行的所有结果（参数、指标、模型、预测、回测报告）
+    # 都会被记录到 MLflow 中，方便后续分析和对比。
+    module_path: qlib.workflow.expm
+    kwargs:
+      uri: sqlite:///mlflow.db # SQLite 数据库文件存记录
+      default_exp_name: workflow # 实验名字
+
+market: &market csi300 # 用沪深300成分股做研究
+benchmark: &benchmark SH000300 # 基准收益  —— SH000300（沪深300指数）
+
+data_handler_config: &data_handler_config
+# 定义YAML 别名（anchor）后面可以用 *data_handler_config 引用整块内容
+
+  start_time: 2008-01-01      # 全量数据的起始
+  end_time:   2020-08-01      # 全量数据的结束
+  fit_start_time: 2008-01-01  # 训练集起始
+  fit_end_time:   2014-12-31  # 训练集结束
+
+  instruments: *market # 使用的股票池
+
+  infer_processors:
+    - class: RobustZScoreNorm      # 去极值 + Z-score 标准化
+      kwargs:
+        fields_group: feature       # 只处理 feature 列
+        clip_outlier: true          # 剪掉 3σ 以外的极端值
+    - class: Fillna                 # 填充 NaN
+      kwargs:
+        fields_group: feature
+
+  learn_processors:
+    - class: DropnaLabel           # 扔掉标签是 NaN 的样本（比如停牌日）
+    - class: CSRankNorm            # 截面 rank 归一化
+      kwargs:
+        fields_group: label         # 只处理 label 列
+
+port_analysis_config: &port_analysis_config
+# 定义YAML 别名（anchor）后面可以用 *port_analysis_config 引用整块内容
+
+  # 选股策略
+  strategy:
+    class: TopkDropoutStrategy
+    module_path: qlib.contrib.strategy
+    kwargs:
+      signal: <PRED>       # ← Qlib 自动注入模型预测分数
+      topk: 50              # 每期持有 top 50 只
+      n_drop: 5             # 每期最多调仓 5 只
+
+  # 回测参数
+  backtest:
+    start_time: 2017-01-01    # 回测区间起始
+    end_time:   2020-08-01    # 回测区间结束
+    account: 100000000        # 初始资金：1 亿（人民币）
+    benchmark: *benchmark     # 基准：沪深300指数（SH000300）
+    # 交易成本模拟
+    exchange_kwargs:
+      limit_threshold: 0.095   # 涨跌停限制：±9.5%（A股是 10%，留0.5%余量）
+      deal_price: close        # 以收盘价成交
+      open_cost: 0.00025        # 买入佣金
+      close_cost: 0.00125       # 卖出佣金 + 印花税	
+      min_cost: 5              # 最低佣金：5 元
+
+task:
+  model:
+    class: QlibGCN                    # 模型类名
+    module_path: qlib_gcn_model.qlib_gcn_model  # 去哪个 Python 文件找
+    kwargs:                           # 传给 QlibGCN.__init__() 的参数
+      d_feat: 6              # Alpha360 = 60 time steps * 6 features
+      hidden_size: 64 # GRU 和 GCN 的 hidden state 维度
+      num_layers: 2 # GRU 层数
+      gcn_hidden_size: 64 # GCN 隐藏层维度
+      dropout: 0.2 # GRU 和 GCN 的 dropout 概率
+      n_epochs: 200 # 训练轮数
+      lr: 0.0005 # 学习率
+      weight_decay: 0.00001 # 权重衰减（L2 正则化）
+      metric: ic             # use daily cross-sectional IC for early stopping
+      early_stop: 20 # 20 轮没有提升就停止训练
+      loss: mse 
+      base_model: GRU # 门控循环单元作为基础模型
+      adj_mode: dynamic      # 图邻接矩阵构建方式
+      topk: 20               # top-20 邻居
+      min_edge_weight: 0.0 # 最小边权重，低于该值的边会被丢弃
+      GPU: 0
+      seed: 42 # 随机种子
+
+  dataset: # 用什么数据
+    class: DatasetH # Qlib 的数据集类
+    module_path: qlib.data.dataset # 去 Qlib 内置库找
+
+    kwargs: # DataHandler 配置
+      handler:
+        class: Alpha360
+        module_path: qlib.contrib.data.handler
+        kwargs: *data_handler_config
+
+      segments: # 训练、验证、测试集划分
+        train: [2008-01-01, 2014-12-31]
+        valid: [2015-01-01, 2016-12-31]
+        test: [2017-01-01, 2020-08-01]
+        
+  record:
+    - class: SignalRecord     # 第1步：保存预测分数
+      kwargs:
+        model: <MODEL>        # Qlib 自动注入训练好的模型
+        dataset: <DATASET>    # Qlib 自动注入数据集
+
+    - class: SigAnaRecord     # 第2步：信号分析
+      kwargs:
+        ana_long_short: False  # 不做多空分析（只做多头）
+        ann_scaler: 252        # 年化乘数（日线数据用 252 个交易日）
+
+    - class: PortAnaRecord    # 第3步：回测
+      kwargs:
+        config: *port_analysis_config  # ← 引用前面的回测配置

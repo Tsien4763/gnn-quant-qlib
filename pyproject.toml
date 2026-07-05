@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qlib-gcn-project"
+version = "0.1.0"
+description = "Qlib-compatible temporal GCN example model."
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "optuna",
+    "pandas",
+    "pyqlib",
+    "PyYAML",
+    "torch",
+]
+
+[tool.setuptools.packages.find]
+include = ["qlib_gcn_model*"]
